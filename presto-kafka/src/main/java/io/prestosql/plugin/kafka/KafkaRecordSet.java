@@ -170,7 +170,7 @@ public class KafkaRecordSet
 
             for (DecoderColumnHandle columnHandle : columnHandles) {
                 if (columnHandle.isInternal()) {
-                    KafkaInternalFieldDescription fieldDescription = KafkaInternalFieldDescription.forColumnName(columnHandle.getName());
+                    KafkaInternalFieldDescription.InternalField fieldDescription = KafkaInternalFieldDescription.InternalField.forColumnName(columnHandle.getName());
                     switch (fieldDescription) {
                         case PARTITION_OFFSET_FIELD:
                             currentRowValuesMap.put(columnHandle, longValueProvider(message.offset()));
