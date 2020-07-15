@@ -32,7 +32,6 @@ import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,6 +42,7 @@ import java.util.stream.Collectors;
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.prestosql.spi.type.VarcharType.createVarcharType;
 import static io.prestosql.testing.TestngUtils.toDataProvider;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static org.apache.kafka.clients.producer.ProducerConfig.ACKS_CONFIG;
 import static org.apache.kafka.clients.producer.ProducerConfig.BOOTSTRAP_SERVERS_CONFIG;
@@ -54,6 +54,7 @@ public class TestKafkaIntegrationSmokeTest
 {
     private TestingKafka testingKafka;
     private String rawFormatTopic;
+    private String headersTopic;
 
     @Override
     protected QueryRunner createQueryRunner()
@@ -61,6 +62,8 @@ public class TestKafkaIntegrationSmokeTest
     {
         testingKafka = new TestingKafka();
         rawFormatTopic = "test_raw_" + UUID.randomUUID().toString().replaceAll("-", "_");
+        headersTopic = "header_test_" + UUID.randomUUID().toString().replaceAll("-", "_");
+
         Map<SchemaTableName, KafkaTopicDescription> extraTopicDescriptions = ImmutableMap.<SchemaTableName, KafkaTopicDescription>builder()
                 .put(new SchemaTableName("default", rawFormatTopic),
                         createDescription(rawFormatTopic, "default", rawFormatTopic,
@@ -76,6 +79,8 @@ public class TestKafkaIntegrationSmokeTest
                                         createOneFieldDescription("boolean_int", BooleanType.BOOLEAN, "41", "INT"),
                                         createOneFieldDescription("boolean_short", BooleanType.BOOLEAN, "45", "SHORT"),
                                         createOneFieldDescription("boolean_byte", BooleanType.BOOLEAN, "47", "BYTE")))))
+                .put(new SchemaTableName("default", headersTopic),
+                        new KafkaTopicDescription(headersTopic, Optional.empty(), headersTopic, Optional.empty(), Optional.empty()))
                 .build();
 
         QueryRunner queryRunner = KafkaQueryRunner.builder(testingKafka)
@@ -99,7 +104,7 @@ public class TestKafkaIntegrationSmokeTest
         buf.put((byte) 127); // 14
         buf.putDouble(123456789.123); // 15-23
         buf.putFloat(123456.789f); // 23-27
-        buf.put("abcdef".getBytes(StandardCharsets.UTF_8)); // 27-33
+        buf.put("abcdef".getBytes(UTF_8)); // 27-33
         buf.putLong(1234567890123L); // 33-41
         buf.putInt(123456789); // 41-45
         buf.putShort((short) 12345); // 45-47
@@ -134,6 +139,27 @@ public class TestKafkaIntegrationSmokeTest
         }
     }
 
+    private void createMessagesWithHeader(String topicName)
+    {
+        try (KafkaProducer<byte[], byte[]> producer = createProducer()) {
+            // Message without headers
+            ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, null, "{}".getBytes(UTF_8));
+            producer.send(record);
+            // Message with simple header
+            record = new ProducerRecord<>(topicName, null, "{}".getBytes(UTF_8));
+            record.headers()
+                    .add("notfoo", "some value".getBytes(UTF_8));
+            producer.send(record);
+            // Message with multiple same key headers
+            record = new ProducerRecord<>(topicName, null, "{}".getBytes(UTF_8));
+            record.headers()
+                    .add("foo", "bar".getBytes(UTF_8))
+                    .add("foo", null)
+                    .add("foo", "baz".getBytes(UTF_8));
+            producer.send(record);
+        }
+    }
+
     private KafkaProducer<byte[], byte[]> createProducer()
     {
         Properties properties = new Properties();
@@ -158,6 +184,17 @@ public class TestKafkaIntegrationSmokeTest
     private KafkaTopicFieldDescription createOneFieldDescription(String name, Type type, String mapping, String dataFormat)
     {
         return new KafkaTopicFieldDescription(name, type, mapping, null, dataFormat, null, false);
+    }
+
+    @Test
+    public void testKafkaHeaders()
+    {
+        createMessagesWithHeader(headersTopic);
+
+        assertQuery("SELECT from_utf8(value) FROM default." + headersTopic +
+                        " CROSS JOIN UNNEST(_headers['foo']) AS arr (value)" +
+                        " WHERE element_at(_headers, 'foo') IS NOT NULL",
+                "VALUES ('bar'), (null), ('baz')");
     }
 
     @Test(dataProvider = "testRoundTripAllFormatsDataProvider")

@@ -19,6 +19,7 @@ import io.prestosql.spi.connector.ColumnMetadata;
 import io.prestosql.spi.type.BigintType;
 import io.prestosql.spi.type.BooleanType;
 import io.prestosql.spi.type.Type;
+import io.prestosql.spi.type.TypeManager;
 
 import java.util.Map;
 import java.util.Optional;
@@ -26,6 +27,10 @@ import java.util.Optional;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Strings.isNullOrEmpty;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static io.prestosql.spi.type.TypeSignature.arrayType;
+import static io.prestosql.spi.type.TypeSignature.mapType;
+import static io.prestosql.spi.type.VarbinaryType.VARBINARY;
+import static io.prestosql.spi.type.VarcharType.VARCHAR;
 import static io.prestosql.spi.type.VarcharType.createUnboundedVarcharType;
 import static java.util.Arrays.stream;
 import static java.util.Objects.requireNonNull;
@@ -65,6 +70,11 @@ public class KafkaInternalFieldDescription
          * <tt>_message_length</tt> - length in bytes of the message.
          */
         MESSAGE_LENGTH_FIELD("_message_length", "Total number of message bytes"),
+
+        /**
+         * <tt>_headers</tt> - The header fields of the Kafka message. Key is a UTF-8 String and values an array of byte[].
+         */
+        HEADERS_FIELD("_headers", "Headers of the message as map."),
 
         /**
          * <tt>_key_corrupt</tt> - True if the row converter could not read the a key. May be null if the row converter does not set a value (e.g. the dummy row converter does not).
@@ -161,14 +171,17 @@ public class KafkaInternalFieldDescription
     private final Map<InternalField, InternalFieldDescription> internalFields;
 
     @Inject
-    public KafkaInternalFieldDescription()
+    public KafkaInternalFieldDescription(TypeManager typeManager)
     {
+        Type varcharMapType = typeManager.getType(mapType(VARCHAR.getTypeSignature(), arrayType(VARBINARY.getTypeSignature())));
+
         internalFields = new ImmutableMap.Builder<InternalField, InternalFieldDescription>()
                 .put(InternalField.PARTITION_ID_FIELD, new InternalFieldDescription(InternalField.PARTITION_ID_FIELD, BigintType.BIGINT))
                 .put(InternalField.PARTITION_OFFSET_FIELD, new InternalFieldDescription(InternalField.PARTITION_OFFSET_FIELD, BigintType.BIGINT))
                 .put(InternalField.MESSAGE_CORRUPT_FIELD, new InternalFieldDescription(InternalField.MESSAGE_CORRUPT_FIELD, BooleanType.BOOLEAN))
                 .put(InternalField.MESSAGE_FIELD, new InternalFieldDescription(InternalField.MESSAGE_FIELD, createUnboundedVarcharType()))
                 .put(InternalField.MESSAGE_LENGTH_FIELD, new InternalFieldDescription(InternalField.MESSAGE_LENGTH_FIELD, BigintType.BIGINT))
+                .put(InternalField.HEADERS_FIELD, new InternalFieldDescription(InternalField.HEADERS_FIELD, varcharMapType))
                 .put(InternalField.KEY_CORRUPT_FIELD, new InternalFieldDescription(InternalField.KEY_CORRUPT_FIELD, BooleanType.BOOLEAN))
                 .put(InternalField.KEY_FIELD, new InternalFieldDescription(InternalField.KEY_FIELD, createUnboundedVarcharType()))
                 .put(InternalField.KEY_LENGTH_FIELD, new InternalFieldDescription(InternalField.KEY_LENGTH_FIELD, BigintType.BIGINT))

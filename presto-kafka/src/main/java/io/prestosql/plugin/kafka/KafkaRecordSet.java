@@ -13,19 +13,25 @@
  */
 package io.prestosql.plugin.kafka;
 
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Multimap;
 import io.airlift.slice.Slice;
 import io.prestosql.decoder.DecoderColumnHandle;
 import io.prestosql.decoder.FieldValueProvider;
 import io.prestosql.decoder.RowDecoder;
 import io.prestosql.spi.block.Block;
+import io.prestosql.spi.block.BlockBuilder;
 import io.prestosql.spi.connector.ColumnHandle;
 import io.prestosql.spi.connector.RecordCursor;
 import io.prestosql.spi.connector.RecordSet;
+import io.prestosql.spi.type.MapType;
 import io.prestosql.spi.type.Type;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.header.Header;
+import org.apache.kafka.common.header.Headers;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -37,6 +43,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static io.prestosql.decoder.FieldValueProviders.booleanValueProvider;
 import static io.prestosql.decoder.FieldValueProviders.bytesValueProvider;
 import static io.prestosql.decoder.FieldValueProviders.longValueProvider;
+import static io.prestosql.spi.type.TypeUtils.writeNativeValue;
 import static java.lang.Math.max;
 import static java.util.Collections.emptyIterator;
 import static java.util.Objects.requireNonNull;
@@ -190,6 +197,9 @@ public class KafkaRecordSet
                         case KEY_CORRUPT_FIELD:
                             currentRowValuesMap.put(columnHandle, booleanValueProvider(decodedKey.isEmpty()));
                             break;
+                        case HEADERS_FIELD:
+                            currentRowValuesMap.put(columnHandle, headerMapValueProvider((MapType) columnHandle.getType(), message.headers()));
+                            break;
                         case MESSAGE_CORRUPT_FIELD:
                             currentRowValuesMap.put(columnHandle, booleanValueProvider(decodedValue.isEmpty()));
                             break;
@@ -268,5 +278,46 @@ public class KafkaRecordSet
         {
             kafkaConsumer.close();
         }
+    }
+
+    public static FieldValueProvider headerMapValueProvider(MapType varcharMapType, Headers headers)
+    {
+        Type keyType = varcharMapType.getTypeParameters().get(0);
+        Type valueArrayType = varcharMapType.getTypeParameters().get(1);
+        Type valueType = valueArrayType.getTypeParameters().get(0);
+
+        BlockBuilder mapBlockBuilder = varcharMapType.createBlockBuilder(null, 1);
+        BlockBuilder builder = mapBlockBuilder.beginBlockEntry();
+
+        // Group by keys and collect values as array.
+        Multimap<String, byte[]> headerMap = ArrayListMultimap.create();
+        for (Header header : headers) {
+            headerMap.put(header.key(), header.value());
+        }
+
+        for (String headerKey : headerMap.keySet()) {
+            writeNativeValue(keyType, builder, headerKey);
+            BlockBuilder arrayBuilder = builder.beginBlockEntry();
+            for (byte[] value : headerMap.get(headerKey)) {
+                writeNativeValue(valueType, arrayBuilder, value);
+            }
+            builder.closeEntry();
+        }
+
+        mapBlockBuilder.closeEntry();
+
+        return new FieldValueProvider() {
+            @Override
+            public boolean isNull()
+            {
+                return false;
+            }
+
+            @Override
+            public Block getBlock()
+            {
+                return varcharMapType.getObject(mapBlockBuilder, 0);
+            }
+        };
     }
 }
