@@ -56,15 +56,18 @@ public class KafkaMetadata
 {
     private final boolean hideInternalColumns;
     private final Set<TableDescriptionSupplier> tableDescriptions;
+    private final KafkaInternalFieldDescription kafkaInternalFieldDescription;
 
     @Inject
     public KafkaMetadata(
             KafkaConfig kafkaConfig,
-            Set<TableDescriptionSupplier> tableDescriptions)
+            Set<TableDescriptionSupplier> tableDescriptions,
+            KafkaInternalFieldDescription kafkaInternalFieldDescription)
     {
         requireNonNull(kafkaConfig, "kafkaConfig is null");
         this.hideInternalColumns = kafkaConfig.isHideInternalColumns();
         this.tableDescriptions = requireNonNull(tableDescriptions, "tableDescriptions is null");
+        this.kafkaInternalFieldDescription = requireNonNull(kafkaInternalFieldDescription, "kafkaInternalFieldDescription is null");
     }
 
     @Override
@@ -149,7 +152,7 @@ public class KafkaMetadata
             }
         });
 
-        for (KafkaInternalFieldDescription kafkaInternalFieldDescription : KafkaInternalFieldDescription.values()) {
+        for (KafkaInternalFieldDescription.InternalFieldDescription kafkaInternalFieldDescription : kafkaInternalFieldDescription.getInternalFields().values()) {
             columnHandles.put(kafkaInternalFieldDescription.getColumnName(), kafkaInternalFieldDescription.getColumnHandle(index.getAndIncrement(), hideInternalColumns));
         }
 
@@ -213,7 +216,7 @@ public class KafkaMetadata
             }
         });
 
-        for (KafkaInternalFieldDescription fieldDescription : KafkaInternalFieldDescription.values()) {
+        for (KafkaInternalFieldDescription.InternalFieldDescription fieldDescription : kafkaInternalFieldDescription.getInternalFields().values()) {
             builder.add(fieldDescription.getColumnMetadata(hideInternalColumns));
         }
 
