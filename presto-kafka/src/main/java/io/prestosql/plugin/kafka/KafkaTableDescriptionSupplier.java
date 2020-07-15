@@ -50,13 +50,21 @@ public class KafkaTableDescriptionSupplier
     private final Set<String> tableNames;
 
     @Inject
-    KafkaTableDescriptionSupplier(KafkaConfig kafkaConfig, JsonCodec<KafkaTopicDescription> topicDescriptionCodec)
+    KafkaTableDescriptionSupplier(
+            KafkaConfig kafkaConfig,
+            JsonCodec<KafkaTopicDescription> topicDescriptionCodec,
+            KafkaConsumerFactory kafkaConsumerFactory)
     {
         this.topicDescriptionCodec = requireNonNull(topicDescriptionCodec, "topicDescriptionCodec is null");
         requireNonNull(kafkaConfig, "kafkaConfig is null");
         this.tableDescriptionDir = kafkaConfig.getTableDescriptionDir();
         this.defaultSchema = kafkaConfig.getDefaultSchema();
-        this.tableNames = ImmutableSet.copyOf(kafkaConfig.getTableNames());
+        if (kafkaConfig.getTableNames().isEmpty()) {
+            this.tableNames = kafkaConsumerFactory.create().listTopics().keySet();
+        }
+        else {
+            this.tableNames = ImmutableSet.copyOf(kafkaConfig.getTableNames());
+        }
     }
 
     @Override
