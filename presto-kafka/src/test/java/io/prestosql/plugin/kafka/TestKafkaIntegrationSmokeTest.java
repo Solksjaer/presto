@@ -54,6 +54,7 @@ public class TestKafkaIntegrationSmokeTest
 {
     private TestingKafka testingKafka;
     private String rawFormatTopic;
+    private String headersTopic;
 
     @Override
     protected QueryRunner createQueryRunner()
@@ -61,6 +62,8 @@ public class TestKafkaIntegrationSmokeTest
     {
         testingKafka = new TestingKafka();
         rawFormatTopic = "test_raw_" + UUID.randomUUID().toString().replaceAll("-", "_");
+        headersTopic = "test_header_" + UUID.randomUUID().toString().replaceAll("-", "_");
+
         Map<SchemaTableName, KafkaTopicDescription> extraTopicDescriptions = ImmutableMap.<SchemaTableName, KafkaTopicDescription>builder()
                 .put(new SchemaTableName("default", rawFormatTopic),
                         createDescription(rawFormatTopic, "default", rawFormatTopic,
@@ -76,6 +79,8 @@ public class TestKafkaIntegrationSmokeTest
                                         createOneFieldDescription("boolean_int", BOOLEAN, "41", "INT"),
                                         createOneFieldDescription("boolean_short", BOOLEAN, "45", "SHORT"),
                                         createOneFieldDescription("boolean_byte", BOOLEAN, "47", "BYTE")))))
+                .put(new SchemaTableName("default", headersTopic),
+                        new KafkaTopicDescription(headersTopic, Optional.empty(), headersTopic, Optional.empty(), Optional.empty()))
                 .build();
 
         QueryRunner queryRunner = KafkaQueryRunner.builder(testingKafka)
@@ -133,6 +138,27 @@ public class TestKafkaIntegrationSmokeTest
         try (KafkaProducer<byte[], byte[]> producer = createProducer()) {
             producer.send(new ProducerRecord<>(topic, data));
             producer.flush();
+        }
+    }
+
+    private void createMessagesWithHeader(String topicName)
+    {
+        try (KafkaProducer<byte[], byte[]> producer = createProducer()) {
+            // Message without headers
+            ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topicName, null, "{}".getBytes(UTF_8));
+            producer.send(record);
+            // Message with simple header
+            record = new ProducerRecord<>(topicName, null, "{}".getBytes(UTF_8));
+            record.headers()
+                    .add("notfoo", "some value".getBytes(UTF_8));
+            producer.send(record);
+            // Message with multiple same key headers
+            record = new ProducerRecord<>(topicName, null, "{}".getBytes(UTF_8));
+            record.headers()
+                    .add("foo", "bar".getBytes(UTF_8))
+                    .add("foo", null)
+                    .add("foo", "baz".getBytes(UTF_8));
+            producer.send(record);
         }
     }
 
@@ -265,6 +291,17 @@ public class TestKafkaIntegrationSmokeTest
     private KafkaTopicFieldDescription createOneFieldDescription(String name, Type type, String mapping, String dataFormat)
     {
         return new KafkaTopicFieldDescription(name, type, mapping, null, dataFormat, null, false);
+    }
+
+    @Test
+    public void testKafkaHeaders()
+    {
+        createMessagesWithHeader(headersTopic);
+
+        assertQuery("SELECT from_utf8(value) FROM default." + headersTopic +
+                        " CROSS JOIN UNNEST(_headers['foo']) AS arr (value)" +
+                        " WHERE element_at(_headers, 'foo') IS NOT NULL",
+                "VALUES ('bar'), (null), ('baz')");
     }
 
     @Test(dataProvider = "roundTripAllFormatsDataProvider")
