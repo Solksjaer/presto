@@ -73,6 +73,11 @@ public class KafkaInternalFieldDescription
         MESSAGE_LENGTH_FIELD("_message_length", "Total number of message bytes", BigintType.BIGINT),
 
         /**
+         * <tt>_headers</tt> - The header fields of the Kafka message. Key is a UTF-8 String and values an array of byte[].
+         */
+        HEADERS_FIELD("_headers", "Headers of the message as map.", typeManager -> typeManager.getType(mapType(VARCHAR.getTypeSignature(), arrayType(VARBINARY.getTypeSignature())))),
+
+        /**
          * <tt>_key_corrupt</tt> - True if the row converter could not read the a key. May be null if the row converter does not set a value (e.g. the dummy row converter does not).
          */
         KEY_CORRUPT_FIELD("_key_corrupt", "Key data is corrupt", BooleanType.BOOLEAN),
