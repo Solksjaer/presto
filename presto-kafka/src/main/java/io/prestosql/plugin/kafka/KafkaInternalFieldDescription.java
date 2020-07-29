@@ -23,6 +23,8 @@ import io.prestosql.spi.type.TypeManager;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Stream;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Strings.isNullOrEmpty;
@@ -49,47 +51,47 @@ public class KafkaInternalFieldDescription
         /**
          * <tt>_partition_id</tt> - Kafka partition id.
          */
-        PARTITION_ID_FIELD("_partition_id", "Partition Id"),
+        PARTITION_ID_FIELD("_partition_id", "Partition Id", BigintType.BIGINT),
 
         /**
          * <tt>_partition_offset</tt> - The current offset of the message in the partition.
          */
-        PARTITION_OFFSET_FIELD("_partition_offset", "Offset for the message within the partition"),
+        PARTITION_OFFSET_FIELD("_partition_offset", "Offset for the message within the partition",  BigintType.BIGINT),
 
         /**
          * <tt>_message_corrupt</tt> - True if the row converter could not read the a message. May be null if the row converter does not set a value (e.g. the dummy row converter does not).
          */
-        MESSAGE_CORRUPT_FIELD("_message_corrupt", "Message data is corrupt"),
+        MESSAGE_CORRUPT_FIELD("_message_corrupt", "Message data is corrupt", BooleanType.BOOLEAN),
 
         /**
          * <tt>_message</tt> - Represents the full topic as a text column. Format is UTF-8 which may be wrong for some topics. TODO: make charset configurable.
          */
-        MESSAGE_FIELD("_message", "Message text"),
+        MESSAGE_FIELD("_message", "Message text", createUnboundedVarcharType()),
 
         /**
          * <tt>_message_length</tt> - length in bytes of the message.
          */
-        MESSAGE_LENGTH_FIELD("_message_length", "Total number of message bytes"),
+        MESSAGE_LENGTH_FIELD("_message_length", "Total number of message bytes",  BigintType.BIGINT),
 
         /**
          * <tt>_headers</tt> - The header fields of the Kafka message. Key is a UTF-8 String and values an array of byte[].
          */
-        HEADERS_FIELD("_headers", "Headers of the message as map."),
+        HEADERS_FIELD("_headers", "Headers of the message as map.", typeManager -> typeManager.getType(mapType(VARCHAR.getTypeSignature(), arrayType(VARBINARY.getTypeSignature())))),
 
         /**
          * <tt>_key_corrupt</tt> - True if the row converter could not read the a key. May be null if the row converter does not set a value (e.g. the dummy row converter does not).
          */
-        KEY_CORRUPT_FIELD("_key_corrupt", "Key data is corrupt"),
+        KEY_CORRUPT_FIELD("_key_corrupt", "Key data is corrupt", BooleanType.BOOLEAN),
 
         /**
          * <tt>_key</tt> - Represents the key as a text column. Format is UTF-8 which may be wrong for topics. TODO: make charset configurable.
          */
-        KEY_FIELD("_key", "Key text"),
+        KEY_FIELD("_key", "Key text", createUnboundedVarcharType()),
 
         /**
          * <tt>_key_length</tt> - length in bytes of the key.
          */
-        KEY_LENGTH_FIELD("_key_length", "Total number of key bytes");
+        KEY_LENGTH_FIELD("_key_length", "Total number of key bytes", BigintType.BIGINT);
 
         private static final Map<String, InternalField> BY_COLUMN_NAME =
                 stream(InternalField.values())
@@ -102,14 +104,21 @@ public class KafkaInternalFieldDescription
             return description;
         }
 
-        private final String columnName;
-        private final String comment;
-
-        InternalField(String columnName, String comment)
+        InternalField(String columnName, String comment, Function<TypeManager, Type> typeProvider)
         {
             checkArgument(!isNullOrEmpty(columnName), "name is null or is empty");
             this.columnName = columnName;
             this.comment = requireNonNull(comment, "comment is null");
+            this.typeProvider = typeProvider;
+        }
+
+        private final String columnName;
+        private final String comment;
+        private final Function<TypeManager, Type> typeProvider;
+
+        InternalField(String columnName, String comment, Type type)
+        {
+            this(columnName, comment, typeManager -> type);
         }
 
         public String getColumnName()
@@ -120,6 +129,10 @@ public class KafkaInternalFieldDescription
         public String getComment()
         {
             return comment;
+        }
+
+        public Type getPrestoType(TypeManager typeManager) {
+            return typeProvider.apply(typeManager);
         }
     }
 
@@ -175,17 +188,10 @@ public class KafkaInternalFieldDescription
     {
         Type varcharMapType = typeManager.getType(mapType(VARCHAR.getTypeSignature(), arrayType(VARBINARY.getTypeSignature())));
 
-        internalFields = new ImmutableMap.Builder<InternalField, InternalFieldDescription>()
-                .put(InternalField.PARTITION_ID_FIELD, new InternalFieldDescription(InternalField.PARTITION_ID_FIELD, BigintType.BIGINT))
-                .put(InternalField.PARTITION_OFFSET_FIELD, new InternalFieldDescription(InternalField.PARTITION_OFFSET_FIELD, BigintType.BIGINT))
-                .put(InternalField.MESSAGE_CORRUPT_FIELD, new InternalFieldDescription(InternalField.MESSAGE_CORRUPT_FIELD, BooleanType.BOOLEAN))
-                .put(InternalField.MESSAGE_FIELD, new InternalFieldDescription(InternalField.MESSAGE_FIELD, createUnboundedVarcharType()))
-                .put(InternalField.MESSAGE_LENGTH_FIELD, new InternalFieldDescription(InternalField.MESSAGE_LENGTH_FIELD, BigintType.BIGINT))
-                .put(InternalField.HEADERS_FIELD, new InternalFieldDescription(InternalField.HEADERS_FIELD, varcharMapType))
-                .put(InternalField.KEY_CORRUPT_FIELD, new InternalFieldDescription(InternalField.KEY_CORRUPT_FIELD, BooleanType.BOOLEAN))
-                .put(InternalField.KEY_FIELD, new InternalFieldDescription(InternalField.KEY_FIELD, createUnboundedVarcharType()))
-                .put(InternalField.KEY_LENGTH_FIELD, new InternalFieldDescription(InternalField.KEY_LENGTH_FIELD, BigintType.BIGINT))
-                .build();
+        internalFields = Stream.of(InternalField.values())
+                .collect(toImmutableMap(
+                        identity(),
+                        internalField -> new InternalFieldDescription(internalField, internalField.getPrestoType(typeManager))));
     }
 
     /**
